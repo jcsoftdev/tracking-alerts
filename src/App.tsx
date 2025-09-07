@@ -18,6 +18,8 @@ function App() {
 
   // map reference
   const mapRef = useRef<MapRef>(null)
+  // track IDs posted from this client to avoid notifying the poster
+  const myPostedIdsRef = useRef<Set<string>>(new Set())
 
   // ...existing code...
 
@@ -42,55 +44,46 @@ function App() {
 
   // play a longer alert sound (alarm-like)
   function playAlertSound() {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const win = window as unknown as { AudioContext?: any; webkitAudioContext?: any }
-      const AC = win.AudioContext || win.webkitAudioContext
-      const ctx: AudioContext = new AC()
+  try {
+    const win = window as unknown as { AudioContext?: any; webkitAudioContext?: any }
+    const AC = win.AudioContext || win.webkitAudioContext
+    const ctx: AudioContext = new AC()
 
-      const o = ctx.createOscillator()
-      const g = ctx.createGain()
-      o.type = 'square'
-      o.connect(g)
-      g.connect(ctx.destination)
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.type = 'sawtooth' // más áspero y agresivo
+    o.connect(g)
+    g.connect(ctx.destination)
 
-      const now = ctx.currentTime
-      g.gain.setValueAtTime(0.0001, now)
+    const now = ctx.currentTime
+    g.gain.setValueAtTime(0.0001, now)
 
-      // First short pulse
-      o.frequency.setValueAtTime(880, now)
-      g.gain.exponentialRampToValueAtTime(0.08, now + 0.02)
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.25)
-
-      // Second longer, lower pulse
-      o.frequency.setValueAtTime(660, now + 0.28)
-      g.gain.exponentialRampToValueAtTime(0.08, now + 0.30)
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.70)
-
-      // Third descending sweep
-      o.frequency.setValueAtTime(660, now + 0.75)
-      o.frequency.linearRampToValueAtTime(330, now + 1.45)
-      g.gain.exponentialRampToValueAtTime(0.06, now + 0.75)
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 1.55)
-
-      o.start(now)
-      // stop and close ctx after sound
-      setTimeout(() => {
-        try {
-          o.stop()
-        } catch (_err) {
-          void _err
-        }
-        try {
-          ctx.close()
-        } catch (_err) {
-          void _err
-        }
-      }, 1700)
-    } catch {
-      // ignore audio failures
+    // Patrón rápido tipo alarma (beep beep beep)
+    for (let i = 0; i < 5; i++) {
+      const t = now + i * 0.25
+      o.frequency.setValueAtTime(1600, t)
+      g.gain.exponentialRampToValueAtTime(0.5, t + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.20)
     }
+
+    o.start(now)
+    setTimeout(() => {
+      try {
+        o.stop()
+      } catch {
+        // ignore
+      }
+      try {
+        ctx.close()
+      } catch {
+        // ignore
+      }
+    }, 1500) // corta rápido para no saturar
+  } catch {
+    // ignora errores de audio
   }
+}
+
   useEffect(() => {
     // build map of previous alerts
     const prev = prevAlertsRef.current
@@ -100,6 +93,12 @@ function App() {
     const newAlerts = alerts.filter((a) => !prev[a.id])
     if (newAlerts.length > 0) {
       newAlerts.forEach((na) => {
+        // if this alert was posted by this client, skip notifications and remove tracking
+        if (myPostedIdsRef.current.has(na.id)) {
+          myPostedIdsRef.current.delete(na.id)
+          return
+        }
+
         // play a longer alert sound
         playAlertSound()
 
@@ -138,12 +137,13 @@ function App() {
     setPosting(true)
     try {
       const pos = await getCurrentPosition()
-      await postAlert({
+      const key = await postAlert({
         description: description.trim(),
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         createdAt: Date.now(),
       })
+      if (key) myPostedIdsRef.current.add(key)
       setDescription('')
     } catch (err) {
       console.error(err)
