@@ -82,19 +82,6 @@ function App() {
               {posting ? 'Publicando...' : 'Publicar denuncia'}
             </button>
             
-            <button
-              onClick={async () => {
-                try {
-                  const p = await getCurrentPosition()
-                  setNotice(`Ubicación actual: ${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)}`)
-                } catch {
-                  setNotice('No se pudo obtener ubicación')
-                }
-              }}
-              className="px-3 py-2 border rounded"
-            >
-              Obtener ubicación
-            </button>
           </div>
         </section>
 
