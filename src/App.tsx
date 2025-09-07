@@ -25,8 +25,16 @@ function App() {
 
   useEffect(() => {
     // subscribe to realtime alerts
+    let initial = true
     const unsub = subscribeAlerts((items: AlertItem[]) => {
       setAlerts(items)
+      if (initial) {
+        // mark current alerts as seen to avoid notifications on first load
+        const seen: Record<string, boolean> = {}
+        items.forEach((a) => (seen[a.id] = true))
+        prevAlertsRef.current = seen
+        initial = false
+      }
     })
 
     return () => unsub()
