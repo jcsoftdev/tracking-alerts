@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import MapView, { type MapRef } from './components/Map'
+import Toasts, { type ToastItem } from './components/Toast'
 import './App.css'
 import { postAlert, subscribeAlerts, type AlertItem } from './firebase'
 
@@ -11,6 +12,9 @@ function App() {
 
   // alerts from realtime DB
   const [alerts, setAlerts] = useState<AlertItem[]>([])
+
+  // toasts
+  const [toasts, setToasts] = useState<ToastItem[]>([])
 
   // map reference
   const mapRef = useRef<MapRef>(null)
@@ -25,6 +29,109 @@ function App() {
 
     return () => unsub()
   }, [])
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
+  }, [])
+
+  // detect new alerts and notify
+  const prevAlertsRef = useRef<Record<string, boolean>>({})
+
+  // play a longer alert sound (alarm-like)
+  function playAlertSound() {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const win = window as unknown as { AudioContext?: any; webkitAudioContext?: any }
+      const AC = win.AudioContext || win.webkitAudioContext
+      const ctx: AudioContext = new AC()
+
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.type = 'square'
+      o.connect(g)
+      g.connect(ctx.destination)
+
+      const now = ctx.currentTime
+      g.gain.setValueAtTime(0.0001, now)
+
+      // First short pulse
+      o.frequency.setValueAtTime(880, now)
+      g.gain.exponentialRampToValueAtTime(0.08, now + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.25)
+
+      // Second longer, lower pulse
+      o.frequency.setValueAtTime(660, now + 0.28)
+      g.gain.exponentialRampToValueAtTime(0.08, now + 0.30)
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.70)
+
+      // Third descending sweep
+      o.frequency.setValueAtTime(660, now + 0.75)
+      o.frequency.linearRampToValueAtTime(330, now + 1.45)
+      g.gain.exponentialRampToValueAtTime(0.06, now + 0.75)
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 1.55)
+
+      o.start(now)
+      // stop and close ctx after sound
+      setTimeout(() => {
+        try {
+          o.stop()
+        } catch (_err) {
+          void _err
+        }
+        try {
+          ctx.close()
+        } catch (_err) {
+          void _err
+        }
+      }, 1700)
+    } catch {
+      // ignore audio failures
+    }
+  }
+  useEffect(() => {
+    // build map of previous alerts
+    const prev = prevAlertsRef.current
+  // const currentIds = new Set(alerts.map((a) => a.id))
+
+    // find new alerts (present now, not in prev)
+    const newAlerts = alerts.filter((a) => !prev[a.id])
+    if (newAlerts.length > 0) {
+      newAlerts.forEach((na) => {
+        // play a longer alert sound
+        playAlertSound()
+
+        // vibrate on supported devices (mobile)
+        try {
+          if ('vibrate' in navigator) {
+            // pattern: pulse, short pause, pulse, short pause, long pulse
+            navigator.vibrate([300, 100, 300, 100, 600])
+          }
+        } catch (_err) {
+          void _err
+        }
+
+        // system notification
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification('Nueva denuncia', { body: na.description })
+          } catch (_err) {
+            void _err
+          }
+        }
+
+        // in-app toast
+        setToasts((t) => [{ id: na.id, title: 'Nueva denuncia', message: na.description }, ...t])
+      })
+    }
+
+    // update prev map
+    const next: Record<string, boolean> = {}
+    alerts.forEach((a) => (next[a.id] = true))
+    prevAlertsRef.current = next
+  }, [alerts])
 
   async function handlePost() {
     if (!description.trim()) return
@@ -54,6 +161,10 @@ function App() {
     }
   }
 
+  const removeToast = (id: string) => {
+    setToasts((t) => t.filter((x) => x.id !== id))
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8">
       <div className="max-w-3xl mx-auto">
@@ -65,7 +176,7 @@ function App() {
         )}
 
         <section className="mb-6">
-          <label className="block font-medium text-gray-700 mb-2 text-2xl">Descripción de la alerta</label>
+          <label className="block font-medium text-gray-700 mb-2 text-2xl text-center">Descripción de la alerta</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -73,7 +184,7 @@ function App() {
             rows={3}
             placeholder="Describe lo que está ocurriendo..."
           />
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex items-center gap-2 mt-2 justify-center">
             <button
               onClick={handlePost}
               disabled={posting}
@@ -85,12 +196,14 @@ function App() {
           </div>
         </section>
 
-        <section className="h-96">
-          <h2 className="text-lg font-semibold mb-2">Mapa (denuncias)</h2>
+  <section className="h-96">
+          <h2 className="text-xl font-semibold mb-2 text-center">Mapa (denuncias)</h2>
           <div className="w-full h-96 rounded border overflow-hidden">
             <MapView ref={mapRef} alerts={alerts} />
           </div>
         </section>
+
+  <Toasts toasts={toasts} onRemove={removeToast} />
 
         <section className="mt-12">
           <h3 className="text-md font-medium mb-2">Últimas denuncias</h3>
