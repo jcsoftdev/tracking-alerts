@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import MapView, { type MapRef } from './components/Map'
 import Toasts, { type ToastItem } from './components/Toast'
 import './App.css'
-import { postAlert, subscribeAlerts, type AlertItem } from './firebase'
+import { beginPostAlert, subscribeAlerts, subscribeNewAlerts, getClientId, type AlertItem } from './firebase'
 
 function App() {
   // form state
@@ -20,14 +20,25 @@ function App() {
   const mapRef = useRef<MapRef>(null)
   // track IDs posted from this client to avoid notifying the poster
   const myPostedIdsRef = useRef<Set<string>>(new Set())
+  // additional hidden set to aggressively hide our own posts in the UI
+  const hiddenPostedIdsRef = useRef<Set<string>>(new Set())
 
   // ...existing code...
 
   useEffect(() => {
     // subscribe to realtime alerts
     let initial = true
-    const unsub = subscribeAlerts((items: AlertItem[]) => {
-      setAlerts(items)
+    const clientId = getClientId()
+  const unsub = subscribeAlerts((items: AlertItem[]) => {
+      // debug: show incoming ids, clientIds and our tracked posted ids
+      try {
+        console.debug('[subscribeAlerts] items', items.map((i) => ({ id: i.id, clientId: i.clientId })), 'myPostedIds', Array.from(myPostedIdsRef.current))
+      } catch (e) {
+        console.debug('[subscribeAlerts] debug err', e)
+      }
+      // filter out alerts that this client posted (either by clientId or tracked push id)
+  const filtered = items.filter((a) => a.clientId !== clientId && !myPostedIdsRef.current.has(a.id) && !hiddenPostedIdsRef.current.has(a.id))
+      setAlerts(filtered)
       if (initial) {
         // mark current alerts as seen to avoid notifications on first load
         const seen: Record<string, boolean> = {}
@@ -38,6 +49,26 @@ function App() {
     })
 
     return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    // listen for per-child additions so we can atomically skip or append new alerts
+    const clientId = getClientId()
+    const unsubNew = subscribeNewAlerts((item: AlertItem) => {
+      // if this item belongs to this client, ensure it's not present locally
+      if (item.clientId === clientId || myPostedIdsRef.current.has(item.id) || hiddenPostedIdsRef.current.has(item.id)) {
+        setAlerts((prev) => prev.filter((a) => a.id !== item.id))
+        // if tracked by id, remove tracking after cleaning
+        if (myPostedIdsRef.current.has(item.id)) myPostedIdsRef.current.delete(item.id)
+        if (hiddenPostedIdsRef.current.has(item.id)) hiddenPostedIdsRef.current.delete(item.id)
+        return
+      }
+
+      // otherwise append if not already present
+      setAlerts((prev) => (prev.some((a) => a.id === item.id) ? prev : [...prev, item]))
+    })
+
+    return () => unsubNew()
   }, [])
 
   // Request notification permission on mount
@@ -103,6 +134,7 @@ function App() {
       newAlerts.forEach((na) => {
         // if this alert was posted by this client, skip notifications and remove tracking
         if (myPostedIdsRef.current.has(na.id)) {
+          try { console.debug('[new-alert] skipping own post', na.id) } catch {}
           myPostedIdsRef.current.delete(na.id)
           return
         }
@@ -145,13 +177,22 @@ function App() {
     setPosting(true)
     try {
       const pos = await getCurrentPosition()
-      const key = await postAlert({
+      // create push ref and obtain key before writing to avoid races
+      const { key, commit } = beginPostAlert()
+      if (key) {
+        // aggressively hide this id in the UI until the write settles
+        myPostedIdsRef.current.add(key)
+        hiddenPostedIdsRef.current.add(key)
+        prevAlertsRef.current[key] = true
+      }
+      // commit the payload
+      await commit({
         description: description.trim(),
         lat: pos.coords.latitude,
         lng: pos.coords.longitude,
         createdAt: Date.now(),
       })
-      if (key) myPostedIdsRef.current.add(key)
+      try { console.debug('[post] clientId', getClientId(), 'recorded key', key, 'myPostedIds', Array.from(myPostedIdsRef.current)) } catch (e) { console.debug(e) }
       setDescription('')
     } catch (err) {
       console.error(err)
@@ -161,7 +202,6 @@ function App() {
     }
   }
 
-  console.log({alerts})
 
   const handleGoToLocation = (lat: number, lng: number) => {
     if (mapRef.current) {
