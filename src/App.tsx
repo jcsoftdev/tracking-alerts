@@ -2,7 +2,13 @@ import { useEffect, useState, useRef } from 'react'
 import MapView, { type MapRef } from './components/Map'
 import Toasts, { type ToastItem } from './components/Toast'
 import './App.css'
-import { beginPostAlert, subscribeAlerts, subscribeNewAlerts, getClientId, type AlertItem } from './firebase'
+import {
+  beginPostAlert,
+  subscribeAlerts,
+  subscribeNewAlerts,
+  getClientId,
+  type AlertItem,
+} from './firebase'
 
 function App() {
   // form state
@@ -29,15 +35,25 @@ function App() {
     // subscribe to realtime alerts
     let initial = true
     const clientId = getClientId()
-  const unsub = subscribeAlerts((items: AlertItem[]) => {
+    const unsub = subscribeAlerts((items: AlertItem[]) => {
       // debug: show incoming ids, clientIds and our tracked posted ids
       try {
-        console.debug('[subscribeAlerts] items', items.map((i) => ({ id: i.id, clientId: i.clientId })), 'myPostedIds', Array.from(myPostedIdsRef.current))
+        console.debug(
+          '[subscribeAlerts] items',
+          items.map((i) => ({ id: i.id, clientId: i.clientId })),
+          'myPostedIds',
+          Array.from(myPostedIdsRef.current)
+        )
       } catch (e) {
         console.debug('[subscribeAlerts] debug err', e)
       }
       // filter out alerts that this client posted (either by clientId or tracked push id)
-  const filtered = items.filter((a) => a.clientId !== clientId && !myPostedIdsRef.current.has(a.id) && !hiddenPostedIdsRef.current.has(a.id))
+      const filtered = items.filter(
+        (a) =>
+          a.clientId !== clientId &&
+          !myPostedIdsRef.current.has(a.id) &&
+          !hiddenPostedIdsRef.current.has(a.id)
+      )
       setAlerts(filtered)
       if (initial) {
         // mark current alerts as seen to avoid notifications on first load
@@ -56,16 +72,24 @@ function App() {
     const clientId = getClientId()
     const unsubNew = subscribeNewAlerts((item: AlertItem) => {
       // if this item belongs to this client, ensure it's not present locally
-      if (item.clientId === clientId || myPostedIdsRef.current.has(item.id) || hiddenPostedIdsRef.current.has(item.id)) {
+      if (
+        item.clientId === clientId ||
+        myPostedIdsRef.current.has(item.id) ||
+        hiddenPostedIdsRef.current.has(item.id)
+      ) {
         setAlerts((prev) => prev.filter((a) => a.id !== item.id))
         // if tracked by id, remove tracking after cleaning
-        if (myPostedIdsRef.current.has(item.id)) myPostedIdsRef.current.delete(item.id)
-        if (hiddenPostedIdsRef.current.has(item.id)) hiddenPostedIdsRef.current.delete(item.id)
+        if (myPostedIdsRef.current.has(item.id))
+          myPostedIdsRef.current.delete(item.id)
+        if (hiddenPostedIdsRef.current.has(item.id))
+          hiddenPostedIdsRef.current.delete(item.id)
         return
       }
 
       // otherwise append if not already present
-      setAlerts((prev) => (prev.some((a) => a.id === item.id) ? prev : [...prev, item]))
+      setAlerts((prev) =>
+        prev.some((a) => a.id === item.id) ? prev : [...prev, item]
+      )
     })
 
     return () => unsubNew()
@@ -83,50 +107,61 @@ function App() {
 
   // play a longer alert sound (alarm-like)
   function playAlertSound() {
-  try {
-    const win = window as unknown as { AudioContext?: any; webkitAudioContext?: any }
-    const AC = win.AudioContext || win.webkitAudioContext
-    const ctx: AudioContext = new AC()
+    try {
+      const win = window as unknown as {
+        AudioContext?: any
+        webkitAudioContext?: any
+      }
+      const AC = win.AudioContext || win.webkitAudioContext
+      const ctx: AudioContext = new AC()
 
-    const o = ctx.createOscillator()
-    const g = ctx.createGain()
-    o.type = 'sawtooth' // más áspero y agresivo
-    o.connect(g)
-    g.connect(ctx.destination)
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.type = 'sawtooth' // agresivo
+      o.connect(g)
+      g.connect(ctx.destination)
 
-    const now = ctx.currentTime
-    g.gain.setValueAtTime(0.0001, now)
+      const now = ctx.currentTime
+      g.gain.setValueAtTime(0.0001, now)
 
-    // Patrón rápido tipo alarma (beep beep beep)
-    for (let i = 0; i < 5; i++) {
-      const t = now + i * 0.25
-      o.frequency.setValueAtTime(1600, t)
-      g.gain.exponentialRampToValueAtTime(0.5, t + 0.01)
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.20)
+      // Duración total
+      const duration = 15
+      const pulseLength = 0.1 // cada beep dura 100ms
+      const silence = 0.15 // silencio entre beeps
+      const cycle = pulseLength + silence
+      const beeps = Math.floor(duration / cycle)
+
+      for (let i = 0; i < beeps; i++) {
+        const t = now + i * cycle
+        // alternar frecuencias para sonar más molesto
+        const freq = i % 2 === 0 ? 1600 : 1200
+        o.frequency.setValueAtTime(freq, t)
+        g.gain.exponentialRampToValueAtTime(0.6, t + 0.01)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + pulseLength)
+      }
+
+      o.start(now)
+      setTimeout(() => {
+        try {
+          o.stop()
+        } catch {
+          // ignore
+        }
+        try {
+          ctx.close()
+        } catch {
+          // ignore
+        }
+      }, duration * 1000 + 500)
+    } catch {
+      // ignora errores de audio
     }
-
-    o.start(now)
-    setTimeout(() => {
-      try {
-        o.stop()
-      } catch {
-        // ignore
-      }
-      try {
-        ctx.close()
-      } catch {
-        // ignore
-      }
-    }, 1500) // corta rápido para no saturar
-  } catch {
-    // ignora errores de audio
   }
-}
 
   useEffect(() => {
     // build map of previous alerts
     const prev = prevAlertsRef.current
-  // const currentIds = new Set(alerts.map((a) => a.id))
+    // const currentIds = new Set(alerts.map((a) => a.id))
 
     // find new alerts (present now, not in prev)
     const newAlerts = alerts.filter((a) => !prev[a.id])
@@ -134,7 +169,9 @@ function App() {
       newAlerts.forEach((na) => {
         // if this alert was posted by this client, skip notifications and remove tracking
         if (myPostedIdsRef.current.has(na.id)) {
-          try { console.debug('[new-alert] skipping own post', na.id) } catch {}
+          try {
+            console.debug('[new-alert] skipping own post', na.id)
+          } catch {}
           myPostedIdsRef.current.delete(na.id)
           return
         }
@@ -162,7 +199,10 @@ function App() {
         }
 
         // in-app toast
-        setToasts((t) => [{ id: na.id, title: 'Nueva denuncia', message: na.description }, ...t])
+        setToasts((t) => [
+          { id: na.id, title: 'Nueva denuncia', message: na.description },
+          ...t,
+        ])
       })
     }
 
@@ -192,7 +232,18 @@ function App() {
         lng: pos.coords.longitude,
         createdAt: Date.now(),
       })
-      try { console.debug('[post] clientId', getClientId(), 'recorded key', key, 'myPostedIds', Array.from(myPostedIdsRef.current)) } catch (e) { console.debug(e) }
+      try {
+        console.debug(
+          '[post] clientId',
+          getClientId(),
+          'recorded key',
+          key,
+          'myPostedIds',
+          Array.from(myPostedIdsRef.current)
+        )
+      } catch (e) {
+        console.debug(e)
+      }
       setDescription('')
     } catch (err) {
       console.error(err)
@@ -201,7 +252,6 @@ function App() {
       setPosting(false)
     }
   }
-
 
   const handleGoToLocation = (lat: number, lng: number) => {
     if (mapRef.current) {
@@ -219,12 +269,19 @@ function App() {
         {notice && (
           <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded flex justify-between items-start">
             <div className="text-sm text-yellow-800">{notice}</div>
-            <button onClick={() => setNotice(null)} className="ml-4 text-yellow-800 font-semibold">Cerrar</button>
+            <button
+              onClick={() => setNotice(null)}
+              className="ml-4 text-yellow-800 font-semibold"
+            >
+              Cerrar
+            </button>
           </div>
         )}
 
         <section className="mb-6">
-          <label className="block font-medium text-gray-700 mb-2 text-2xl text-center">Descripción de la alerta</label>
+          <label className="block font-medium text-gray-700 mb-2 text-2xl text-center">
+            Descripción de la alerta
+          </label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -240,33 +297,42 @@ function App() {
             >
               {posting ? 'Publicando...' : 'Publicar denuncia'}
             </button>
-            
           </div>
         </section>
 
-  <section className="h-96">
-          <h2 className="text-xl font-semibold mb-2 text-center">Mapa (denuncias)</h2>
+        <section className="h-96">
+          <h2 className="text-xl font-semibold mb-2 text-center">
+            Mapa (denuncias)
+          </h2>
           <div className="w-full h-96 rounded border overflow-hidden">
             <MapView ref={mapRef} alerts={alerts} />
           </div>
         </section>
 
-  <Toasts toasts={toasts} onRemove={removeToast} />
+        <Toasts toasts={toasts} onRemove={removeToast} />
 
         <section className="mt-12">
           <h3 className="text-md font-medium mb-2">Últimas denuncias</h3>
           <ul className="space-y-2">
-            {alerts.slice().reverse().map((a) => (
-              <li 
-                key={a.id} 
-                className="p-2 bg-white rounded shadow-sm cursor-pointer hover:bg-gray-50 transition-colors"
-                onClick={() => handleGoToLocation(a.lat, a.lng)}
-              >
-                <div className="text-sm text-gray-700">{a.description}</div>
-                <div className="text-xs text-gray-500">{new Date(a.createdAt).toLocaleString()} • {a.lat.toFixed(5)}, {a.lng.toFixed(5)}</div>
-                <div className="text-xs text-blue-600 mt-1">Clic para ver en el mapa</div>
-              </li>
-            ))}
+            {alerts
+              .slice()
+              .reverse()
+              .map((a) => (
+                <li
+                  key={a.id}
+                  className="p-2 bg-white rounded shadow-sm cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => handleGoToLocation(a.lat, a.lng)}
+                >
+                  <div className="text-sm text-gray-700">{a.description}</div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(a.createdAt).toLocaleString()} •{' '}
+                    {a.lat.toFixed(5)}, {a.lng.toFixed(5)}
+                  </div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    Clic para ver en el mapa
+                  </div>
+                </li>
+              ))}
           </ul>
         </section>
       </div>
@@ -274,9 +340,12 @@ function App() {
   )
 }
 
-function getCurrentPosition(options?: PositionOptions): Promise<GeolocationPosition> {
+function getCurrentPosition(
+  options?: PositionOptions
+): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('Geolocation not supported'))
+    if (!navigator.geolocation)
+      return reject(new Error('Geolocation not supported'))
     navigator.geolocation.getCurrentPosition(resolve, reject, options)
   })
 }
